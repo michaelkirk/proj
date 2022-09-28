@@ -19,10 +19,10 @@ jobs:
     name: ci result
     runs-on: ubuntu-latest
     needs:
-      - proj-ubuntu
+      # - proj-ubuntu
       - proj-sys-ubuntu
-      - proj-macos
-      - proj-sys-macos
+      # - proj-macos
+      # - proj-sys-macos
     steps:
       - name: Mark the job as a success
         if: success()
@@ -31,110 +31,44 @@ jobs:
         if: "!success()"
         run: exit 1
 
-  proj-ubuntu:
-    name: proj ubuntu
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        container_image:
-          # Minimum supported rust (MSRV)
-          - "georust/proj-ci:proj-9.0.0-rust-1.56"
-          # Latest stable rust
-          - "georust/proj-ci:rust-1.63"
-        features:
-          - ""
-          - "--features network"
-          - "--features bundled_proj"
-          - "--no-default-features"
-          - "--features \"network bundled_proj\""
-          - "--features \"network geo-types\""
-          - "--features \"bundled_proj geo-types\""
-          - "--features \"network bundled_proj geo-types\""
-    container:
-      image: ${{ matrix.container_image }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-      - run: cargo build ${{ matrix.features }}
-      - run: cargo test ${{ matrix.features }}
-
-  proj-macos:
-    name: proj macos
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        features: ["", "--features network"]
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-      - run: cargo build ${{ matrix.features }}
-      - run: cargo test ${{ matrix.features }}
-
   proj-sys-ubuntu:
     name: proj-sys ubuntu
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     runs-on: ubuntu-latest
     defaults:
-      run:
-        working-directory: proj-sys
-    container: ${{ matrix.container }}
-    strategy:
-      matrix:
-        include:
-          # Minimum supported rust (MSRV)
-          - container:
-              image: georust/proj-ci:proj-9.0.0-rust-1.56
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 0
-            features: ""
-          - container:
-              image: georust/proj-ci:proj-9.0.0-rust-1.56
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 1
-            features: "--features bundled_proj"
-          - container:
-              image: georust/proj-ci-without-system-proj:proj-9.0.0-rust-1.56
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 1
-            features: ""
-
-          # Latest stable rust
-          - container:
-              image: georust/proj-ci:rust-1.63
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 0
-            features: ""
-          - container:
-              image: georust/proj-ci:rust-1.63
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 1
-            features: "--features bundled_proj"
-          - container:
-              image: georust/proj-ci-without-system-proj:rust-1.63
-              env:
-                _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 1
-            features: ""
+    run:
+      working-directory: proj-sys
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-      - run: cargo build ${{ matrix.features }}
-      - run: cargo test ${{ matrix.features }}
+      - uses: actions/checkout@v3
 
-  proj-sys-macos:
-    name: proj-sys macos
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: macos-latest
-    env:
-      _PROJ_SYS_TEST_EXPECT_BUILD_FROM_SRC: 0
-    defaults:
-      run:
-        working-directory: proj-sys
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-      - run: brew install proj
-      - run: cargo test
+      - name: Cache libproj
+        uses: actions/cache@v3
+        env:
+          cache-name: cache-libproj-build
+          proj-archive: 9.1.0.tar.gz
+        with:
+          # npm cache files are stored in `~/.npm` on Linux/macOS
+          path: ~/libproj-build
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ env.proj-archive }}
+
+    - if: ${{ steps.cache-libprojbuild.outputs.cache-hit != 'true' }}
+        name: build libproj
+        run: |
+          cd PROJSRC
+          tar -xzvf proj-9.1.0.tar.gz
+          mv proj-9.1.0 proj-src
+          cd proj-src
+          mkdir build
+          cmake .. -DCMAKE_INSTALL_PREFIX=~/libproj-build
+          cmake --build . --target install -j $(nproc)
+
+    - name: install system proj
+      run: |
+        cp -r ~/libproj-build/ /usr
+
+    - name:
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - uses: actions-rs/cargo@v1
+        with:
+          command: test
